@@ -17,7 +17,7 @@ cpp
 Copy
 Edit
 /project-root
-  ├── public
+  ├── public// Public is A Ziped Folder you need to unzid it first
   │     ├── index.html      // Main game interface
   │     ├── script.js       // Client-side socket and game logic
   │     └── styles.css      // Game styling
