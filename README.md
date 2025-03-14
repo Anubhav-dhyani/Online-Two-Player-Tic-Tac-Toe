@@ -40,7 +40,7 @@ A real-time multiplayer Tic-Tac-Toe game built using Node.js, Express, and Socke
 
 ## 📂 Project Structure
 
-/project-root ├── public │ ├── index.html // Game interface │ ├── script.js // Client-side logic │ └── styles.css // Game styling └── server.js // Server-side socket and game management
+/project-root ├── public// Public is a Ziped Folder you need to unzid it first│ ├── index.html // Game interface │ ├── script.js // Client-side logic │ └── styles.css // Game styling └── server.js // Server-side socket and game management
 
 markdown
 Copy
