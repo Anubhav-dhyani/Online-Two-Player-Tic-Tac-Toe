@@ -2,99 +2,131 @@ const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
+const { v4: uuidv4 } = require('uuid'); // For generating room codes
 
 app.use(express.static('public'));
 
 const PORT = 3000;
 
-let players = {};
-let gameBoard = Array(9).fill(null);
-let currentPlayer = 'X';
+let publicGames = []; // Stores open public games
+let privateGames = {}; // Stores private games by room code
 
 // Function to check winner
-function checkWinner() {
+function checkWinner(gameBoard) {
     const winPatterns = [
-        [0, 1, 2],
-        [3, 4, 5],
-        [6, 7, 8],
-        [0, 3, 6],
-        [1, 4, 7],
-        [2, 5, 8],
-        [0, 4, 8],
-        [2, 4, 6]
+        [0, 1, 2], [3, 4, 5], [6, 7, 8], 
+        [0, 3, 6], [1, 4, 7], [2, 5, 8], 
+        [0, 4, 8], [2, 4, 6]
     ];
     for (let pattern of winPatterns) {
         const [a, b, c] = pattern;
         if (gameBoard[a] && gameBoard[a] === gameBoard[b] && gameBoard[a] === gameBoard[c]) {
-            return gameBoard[a]; // 'X' or 'O'
+            return gameBoard[a];
         }
     }
-    return null; // No winner yet
+    return null;
 }
 
 // Function to reset game
-function resetGame() {
-    gameBoard = Array(9).fill(null);
-    currentPlayer = 'X';
+function resetGame(room) {
+    if (room) {
+        room.gameBoard = Array(9).fill(null);
+        room.currentPlayer = 'X';
+    }
 }
 
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
-    // Handle connection
-    if (Object.keys(players).length < 2) {
-        players[socket.id] = Object.keys(players).length === 0 ? 'X' : 'O';
-        socket.emit('playerType', players[socket.id]);
-        io.emit('updateBoard', gameBoard, currentPlayer);
-    } else {
-        socket.emit('full', 'Game is full! Try again later.');
-        socket.disconnect();
-        return;
-    }
+    // Handle creating a private game
+    socket.on('createPrivateGame', () => {
+        const roomCode = uuidv4().substring(0, 6); // Generate 6-character room code
+        privateGames[roomCode] = {
+            players: {},
+            gameBoard: Array(9).fill(null),
+            currentPlayer: 'X'
+        };
+        socket.emit('privateGameCreated', roomCode);
+    });
 
-    // Handle move
-    socket.on('move', (index) => {
-        if (gameBoard[index] === null && players[socket.id] === currentPlayer) {
-            gameBoard[index] = players[socket.id]; // Set move
-            const winner = checkWinner();
+    // Handle joining a private game
+    socket.on('joinPrivateGame', (roomCode) => {
+        if (privateGames[roomCode] && Object.keys(privateGames[roomCode].players).length < 2) {
+            socket.join(roomCode);
+            let room = privateGames[roomCode];
+            room.players[socket.id] = Object.keys(room.players).length === 0 ? 'X' : 'O';
+
+            socket.emit('playerType', room.players[socket.id]);
+            io.to(roomCode).emit('updateBoard', room.gameBoard, room.currentPlayer);
+        } else {
+            socket.emit('privateGameError', 'Room is full or does not exist!');
+        }
+    });
+
+    // Handle joining a public game
+    socket.on('joinPublicGame', () => {
+        let roomCode = publicGames.find(roomCode => {
+            let room = privateGames[roomCode];
+            return room && Object.keys(room.players).length < 2;
+        });
+    
+        if (!roomCode) {
+            roomCode = uuidv4().substring(0, 6);
+            publicGames.push(roomCode);
+            privateGames[roomCode] = { players: {}, gameBoard: Array(9).fill(null), currentPlayer: 'X' };
+        }
+    
+        socket.join(roomCode);
+        let room = privateGames[roomCode];
+        room.players[socket.id] = Object.keys(room.players).length === 0 ? 'X' : 'O';
+    
+        socket.emit('playerType', room.players[socket.id]);
+        io.to(roomCode).emit('updateBoard', room.gameBoard, room.currentPlayer);
+    });
+    
+
+    // Handle moves
+    socket.on('move', (index, roomCode) => {
+        let room = privateGames[roomCode];
+
+        if (room && room.gameBoard[index] === null && room.players[socket.id] === room.currentPlayer) {
+            room.gameBoard[index] = room.players[socket.id];
+            const winner = checkWinner(room.gameBoard);
 
             if (winner) {
-                io.emit('gameOver', `${winner} wins!`);
-                resetGame();
-                io.emit('updateBoard', gameBoard, currentPlayer);
-            } else if (gameBoard.every(cell => cell !== null)) {
-                io.emit('gameOver', 'Draw!');
-                resetGame();
-                io.emit('updateBoard', gameBoard, currentPlayer);
+                io.to(roomCode).emit('gameOver', `${winner} wins!`);
+                resetGame(room);
+            } else if (room.gameBoard.every(cell => cell !== null)) {
+                io.to(roomCode).emit('gameOver', 'Draw!');
+                resetGame(room);
             } else {
-                // Continue game
-                currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
-                io.emit('updateBoard', gameBoard, currentPlayer);
+                room.currentPlayer = room.currentPlayer === 'X' ? 'O' : 'X';
+                io.to(roomCode).emit('updateBoard', room.gameBoard, room.currentPlayer);
             }
         }
     });
 
-    // Handle reset by player
-    socket.on('reset', () => {
-        resetGame();
-        io.emit('updateBoard', gameBoard, currentPlayer);
+    // Handle game reset
+    socket.on('reset', (roomCode) => {
+        let room = privateGames[roomCode];
+        if (room) {
+            resetGame(room);
+            io.to(roomCode).emit('updateBoard', room.gameBoard, room.currentPlayer);
+        }
     });
 
     // Handle disconnection
     socket.on('disconnect', () => {
         console.log('User disconnected:', socket.id);
+        for (let roomCode in privateGames) {
+            let room = privateGames[roomCode];
 
-        // Notify both players
-        io.emit('gameClosed', 'Opponent disconnected. Game closed!');
-
-        // Disconnect both players
-        for (let id in players) {
-            io.sockets.sockets.get(id)?.disconnect(true);
+            if (room.players[socket.id]) {
+                io.to(roomCode).emit('gameClosed', 'Opponent disconnected. Game closed!');
+                delete privateGames[roomCode];
+                break;
+            }
         }
-
-        // Reset game state
-        players = {};
-        resetGame();
     });
 });
 
