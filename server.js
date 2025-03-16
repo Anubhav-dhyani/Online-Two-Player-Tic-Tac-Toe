@@ -1,12 +1,20 @@
 const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
-const io = require('socket.io')(http);
 const { v4: uuidv4 } = require('uuid'); // For generating room codes
 
+const io = require('socket.io')(http, {
+    cors: {
+        origin: "*",  // Allow all origins (you can restrict this)
+        methods: ["GET", "POST"]
+    }
+});
 app.use(express.static('public'));
 
 const PORT = 3000;
+
+
+
 
 let publicGames = []; // Stores open public games
 let privateGames = {}; // Stores private games by room code
